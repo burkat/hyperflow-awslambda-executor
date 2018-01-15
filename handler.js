@@ -48,8 +48,8 @@ module.exports.executor = function (event, context, mainCallback) {
                     console.log(err);
                     callback(err);
                 }
-                fs.writeFile('/tmp/' + file_name, data.Body, function(err) {
-                    if(err) {
+                fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
+                    if (err) {
                         console.log("Unable to save file " + file_name);
                         callback(err);
                     }
@@ -100,38 +100,45 @@ module.exports.executor = function (event, context, mainCallback) {
     }
 
     function upload(callback) {
-        callback();
+        async.each(outputs, function (file, callback) {
 
-        // async.each(outputs, function (file_name, callback) {
-        //
-        //     file_name = file_name.name;
-        //
-        //     var full_path = bucket_name + "/" + prefix + "/" + file_name;
-        //     console.log('uploading ' + full_path);
-        //
-        //     // Reference an existing bucket.
-        //     var bucket = gcs.bucket(bucket_name);
-        //
-        //     // Upload a file to your bucket.
-        //     bucket.upload('/tmp/' + file_name, {destination: prefix + "/" + file_name}, function (err) {
-        //         if (err) {
-        //             console.error("Error uploading file " + full_path);
-        //             console.error(err);
-        //             callback(err);
-        //         } else {
-        //             console.log("Uploaded file " + full_path);
-        //             callback();
-        //         }
-        //     });
-        // }, function (err) {
-        //     if (err) {
-        //         console.error('A file failed to process');
-        //         callback('Error uploading')
-        //     } else {
-        //         console.log('All files have been uploaded successfully');
-        //         callback()
-        //     }
-        // });
+            var file_name = file.name;
+            console.log('uploading ' + bucket_name + "/" + prefix + "/" + file_name);
+
+            fs.readFile('/tmp/' + file_name, function(err, data) {
+                if (err) {
+                    console.log("Error reading file " + file_name);
+                    console.log(err);
+                    callback(err);
+                }
+
+                var params = {
+                    Bucket: bucket_name,
+                    Key: prefix + "/" + file_name,
+                    Body: data
+                };
+
+
+                s3.putObject(params, function(err, data) {
+                   if (err){
+                       console.log("Error uploading file " + file_name);
+                       console.log(err);
+                       callback(err);
+                   }
+                   console.log("Uploaded file " + file_name);
+                   callback();
+                });
+            });
+
+        }, function (err) {
+            if (err) {
+                console.error('A file failed to process');
+                callback('Error uploading')
+            } else {
+                console.log('All files have been uploaded successfully');
+                callback()
+            }
+        });
     }
 
 

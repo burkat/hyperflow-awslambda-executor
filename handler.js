@@ -18,6 +18,7 @@ module.exports.executor = function (event, context, mainCallback) {
     var outputs = body.outputs;
     var bucket_name = body.options.bucket;
     var prefix = body.options.prefix;
+    var envfiles = body.options.envfiles;
 
     var t_start = Date.now();
     var t_end;
@@ -29,7 +30,60 @@ module.exports.executor = function (event, context, mainCallback) {
     console.log('outputs:    ' + outputs);
     console.log('bucket:     ' + bucket_name);
     console.log('prefix:     ' + prefix);
+    console.log('envfiles:     ' + envfiles);
 
+    function prepare(callback) {
+        if (typeof envfiles === 'undefined') {
+            console.log("Skipping env initialization");
+            callback();
+            return;
+        }
+
+        var params = {
+            Bucket: envfiles.bucket,
+            Prefix: envfiles.prefix + "/"
+        };
+        s3.listObjects(params, function (err, data) {
+            console.log(data);
+            async.each(data.Contents, function (entry, callback) {
+                var key = entry.Key;
+                var params = {
+                    Bucket: envfiles.bucket,
+                    Key: key
+                };
+                var file_name = key.slice(envfiles.prefix.length);
+                if (key != envfiles.prefix && file_name.length == 0) {
+                    callback();
+                    return;
+                }
+                s3.getObject(params, function (err, data) {
+                    if (err) {
+                        console.log("Error downloading file " + JSON.stringify(params));
+                        console.log(err);
+                        callback(err);
+                    } else {
+                        fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
+                            if (err) {
+                                console.log("Unable to save file " + file_name);
+                                console.log(err);
+                                callback(err);
+                            }
+                            console.log("Downloaded file " + JSON.stringify(params));
+                            callback();
+                        });
+                    }
+                });
+            }, function (err) {
+                if (err) {
+                    console.error('A file failed to process');
+                    callback('Error downloading');
+                } else {
+                    console.log('All files have been downloaded successfully');
+                    callback();
+                }
+            });
+        });
+    }
 
     function download(callback) {
         async.each(inputs, function (file, callback) {
@@ -47,15 +101,16 @@ module.exports.executor = function (event, context, mainCallback) {
                     console.log("Error downloading file " + JSON.stringify(params));
                     console.log(err);
                     callback(err);
+                } else {
+                    fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
+                        if (err) {
+                            console.log("Unable to save file " + file_name);
+                            callback(err);
+                        }
+                        console.log("Downloaded file " + JSON.stringify(params));
+                        callback();
+                    });
                 }
-                fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
-                    if (err) {
-                        console.log("Unable to save file " + file_name);
-                        callback(err);
-                    }
-                    console.log("Downloaded file " + JSON.stringify(params));
-                    callback();
-                });
             });
         }, function (err) {
             if (err) {
@@ -70,10 +125,11 @@ module.exports.executor = function (event, context, mainCallback) {
 
 
     function execute(callback) {
-        var proc_name = __dirname + '/' + executable;
+        console.log(fs.readdirSync('/tmp/'));
+        var proc_name = '/tmp/' + executable;
 
         console.log('spawning ' + proc_name);
-        process.env.PATH = '.:' + __dirname; // add . and __dirname to PATH since e.g. in Montage mDiffFit calls external executables
+        process.env.PATH = '.:' + __dirname + ":/tmp/"; // add . and __dirname to PATH since e.g. in Montage mDiffFit calls external executables
         var proc = spawn(proc_name, args, {cwd: '/tmp'});
 
         proc.on('error', function (code) {
@@ -105,7 +161,7 @@ module.exports.executor = function (event, context, mainCallback) {
             var file_name = file.name;
             console.log('uploading ' + bucket_name + "/" + prefix + "/" + file_name);
 
-            fs.readFile('/tmp/' + file_name, function(err, data) {
+            fs.readFile('/tmp/' + file_name, function (err, data) {
                 if (err) {
                     console.log("Error reading file " + file_name);
                     console.log(err);
@@ -119,14 +175,14 @@ module.exports.executor = function (event, context, mainCallback) {
                 };
 
 
-                s3.putObject(params, function(err, data) {
-                   if (err){
-                       console.log("Error uploading file " + file_name);
-                       console.log(err);
-                       callback(err);
-                   }
-                   console.log("Uploaded file " + file_name);
-                   callback();
+                s3.putObject(params, function (err, data) {
+                    if (err) {
+                        console.log("Error uploading file " + file_name);
+                        console.log(err);
+                        callback(err);
+                    }
+                    console.log("Uploaded file " + file_name);
+                    callback();
                 });
             });
 
@@ -143,6 +199,7 @@ module.exports.executor = function (event, context, mainCallback) {
 
 
     async.waterfall([
+        prepare,
         download,
         execute,
         upload

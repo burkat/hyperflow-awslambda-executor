@@ -47,15 +47,17 @@ module.exports.executor = function (event, context, mainCallback) {
                     console.log("Error downloading file " + JSON.stringify(params));
                     console.log(err);
                     callback(err);
+                } else {
+                    fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
+                        if (err) {
+                            console.log("Unable to save file " + file_name);
+                            callback(err);
+                            return;
+                        }
+                        console.log("Downloaded file " + JSON.stringify(params));
+                        callback();
+                    });
                 }
-                fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
-                    if (err) {
-                        console.log("Unable to save file " + file_name);
-                        callback(err);
-                    }
-                    console.log("Downloaded file " + JSON.stringify(params));
-                    callback();
-                });
             });
         }, function (err) {
             if (err) {
@@ -110,6 +112,7 @@ module.exports.executor = function (event, context, mainCallback) {
                     console.log("Error reading file " + file_name);
                     console.log(err);
                     callback(err);
+                    return;
                 }
 
                 var params = {
@@ -124,6 +127,7 @@ module.exports.executor = function (event, context, mainCallback) {
                        console.log("Error uploading file " + file_name);
                        console.log(err);
                        callback(err);
+                       return;
                    }
                    console.log("Uploaded file " + file_name);
                    callback();

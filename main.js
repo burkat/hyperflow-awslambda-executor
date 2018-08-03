@@ -35,11 +35,11 @@ exports.handler = function (event, context, mainCallback) {
         async.each(inputs, function (file, callback) {
 
             var file_name = file.name;
-            console.log('downloading ' + bucket_name + "/" + prefix + "/" + file_name);
+            console.log('downloading ' + bucket_name + "/" + prefix + file_name);
 
             var params = {
                 Bucket: bucket_name,
-                Key: prefix + "/" + file_name
+                Key: prefix + file_name
             };
 
             s3.getObject(params, function (err, data) {
@@ -62,7 +62,7 @@ exports.handler = function (event, context, mainCallback) {
         }, function (err) {
             if (err) {
                 console.error('A file failed to process');
-                callback('Error downloading')
+                callback('Error downloading ' + err)
             } else {
                 console.log('All files have been downloaded successfully');
                 callback()
@@ -105,7 +105,7 @@ exports.handler = function (event, context, mainCallback) {
         async.each(outputs, function (file, callback) {
 
             var file_name = file.name;
-            console.log('uploading ' + bucket_name + "/" + prefix + "/" + file_name);
+            console.log('uploading ' + bucket_name + "/" + prefix + file_name);
 
             fs.readFile('/tmp/' + file_name, function(err, data) {
                 if (err) {
@@ -117,7 +117,7 @@ exports.handler = function (event, context, mainCallback) {
 
                 var params = {
                     Bucket: bucket_name,
-                    Key: prefix + "/" + file_name,
+                    Key: prefix + file_name,
                     Body: data
                 };
 

@@ -6,7 +6,7 @@ var async = require('async');
 var aws = require('aws-sdk');
 var s3 = new aws.S3();
 
-module.exports.executor = function (event, context, mainCallback) {
+exports.handler = function (event, context, mainCallback) {
 
     // console.log(event);
 

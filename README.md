@@ -37,6 +37,13 @@ One way to make sure that your executables will run in the cloud is to link them
 
 Once the static version of binaries is ready, you should copy them to your local `hyperflow-aws-executor ` directory containing the main `handler.js` of the Executor.
 
+### (Optional) Running .js scripts and getting executables from S3
+
+It is possible to run .js script. When .js file is detected as executable, fork process is created. 
+
+When expected executables are not given during deployment process, the handler will look for them in S3. 
+The files will be downloaded to /tmp, given exec permissions and executed.
+
 ## Preparing the workflow and input data
 
 ### Creating the workflow

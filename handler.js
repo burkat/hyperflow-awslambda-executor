@@ -1,60 +1,79 @@
 'use strict';
 
-var spawn = require('child_process').spawn;
+var childProcess = require('child_process');
 var fs = require('fs');
 var async = require('async');
 var aws = require('aws-sdk');
+const path = require('path');
 var s3 = new aws.S3();
 
 module.exports.executor = function (event, context, mainCallback) {
-
-    // console.log(event);
 
     var body = JSON.parse(event.body);
 
     var executable = body.executable;
     var args = body.args;
-    var inputs = body.inputs;
-    var outputs = body.outputs;
     var bucket_name = body.options.bucket;
     var prefix = body.options.prefix;
+    var inputs = [];
+    for (let index = 0; index < body.inputs.length; ++index) {
+        inputs.push(body.inputs[index].name);
+    }
+    var outputs = [];
+    for (let index = 0; index < body.outputs.length; ++index) {
+        outputs.push(body.outputs[index].name);
+    }
+    var files = inputs.slice();
+    if (!fs.existsSync(__dirname + '/' + executable)) {
+        files.push(executable);
+    }
 
     var t_start = Date.now();
     var t_end;
 
     console.log('executable: ' + executable);
-    console.log('args:       ' + args);
-    console.log('inputs:     ' + inputs);
-    console.log('inputs[0].name:     ' + inputs[0].name);
+    console.log('arguments:  ' + args);
+    console.log('inputs:      ' + inputs);
     console.log('outputs:    ' + outputs);
     console.log('bucket:     ' + bucket_name);
     console.log('prefix:     ' + prefix);
 
+    const directory = '/tmp';
+    fs.readdir(directory, (err, files) => {
+        if (err) throw err;
+        for (const file of files) {
+            fs.unlink(path.join(directory, file), err => {
+                if (err) throw err;
+            });
+        }
+    });
 
     function download(callback) {
-        async.each(inputs, function (file, callback) {
+        async.each(files, function (file, callback) {
 
-            var file_name = file.name;
-            console.log('downloading ' + bucket_name + "/" + prefix + "/" + file_name);
+            console.log('Downloading ' + bucket_name + "/" + prefix + "/" + file);
 
             var params = {
                 Bucket: bucket_name,
-                Key: prefix + "/" + file_name
+                Key: prefix + "/" + file
             };
-
             s3.getObject(params, function (err, data) {
                 if (err) {
                     console.log("Error downloading file " + JSON.stringify(params));
                     console.log(err);
                     callback(err);
                 } else {
-                    fs.writeFile('/tmp/' + file_name, data.Body, function (err) {
+                    fs.writeFile('/tmp/' + file, data.Body, function (err) {
                         if (err) {
-                            console.log("Unable to save file " + file_name);
+                            console.log("Unable to save file " + file);
                             callback(err);
                             return;
                         }
-                        console.log("Downloaded file " + JSON.stringify(params));
+                        if (file === executable) {
+                            console.log("Downloaded executable " + JSON.stringify(params));
+                        } else {
+                            console.log("Downloaded file " + JSON.stringify(params));
+                        }
                         callback();
                     });
                 }
@@ -70,46 +89,53 @@ module.exports.executor = function (event, context, mainCallback) {
         });
     }
 
-
     function execute(callback) {
         var proc_name = __dirname + '/' + executable;
 
-        console.log('spawning ' + proc_name);
-        process.env.PATH = '.:' + __dirname; // add . and __dirname to PATH since e.g. in Montage mDiffFit calls external executables
-        var proc = spawn(proc_name, args, {cwd: '/tmp'});
+
+        if (fs.existsSync(/tmp/ + executable)) {
+            proc_name = /tmp/ + executable;
+            console.log("Running executable from S3");
+            fs.chmodSync(proc_name, '777');
+        }
+        var proc;
+        console.log('Running ' + proc_name);
+
+        if (proc_name.endsWith(".js")) {
+            proc = childProcess.fork(proc_name, args, {cwd: '/tmp'});
+        } else {
+            process.env.PATH = '.:' + __dirname;
+            proc = childProcess.spawn(proc_name, args, {cwd: '/tmp'});
+
+            proc.stdout.on('data', function (exedata) {
+                console.log('Stdout: ' + executable + exedata);
+            });
+
+            proc.stderr.on('data', function (exedata) {
+                console.log('Stderr: ' + executable + exedata);
+            });
+        }
 
         proc.on('error', function (code) {
             console.error('error!!' + executable + JSON.stringify(code));
         });
-
-        proc.stdout.on('data', function (exedata) {
-            console.log('Stdout: ' + executable + exedata);
-        });
-
-        proc.stderr.on('data', function (exedata) {
-            console.log('Stderr: ' + executable + exedata);
-        });
-
-        proc.on('close', function (code) {
-            console.log('My exe close' + executable);
+        proc.on('close', function () {
+            console.log('My exe close ' + executable);
             callback()
         });
-
-        proc.on('exit', function (code) {
-            console.log('My exe exit' + executable);
+        proc.on('exit', function () {
+            console.log('My exe exit ' + executable);
         });
-
     }
 
     function upload(callback) {
         async.each(outputs, function (file, callback) {
 
-            var file_name = file.name;
-            console.log('uploading ' + bucket_name + "/" + prefix + "/" + file_name);
+            console.log('uploading ' + bucket_name + "/" + prefix + "/" + file);
 
-            fs.readFile('/tmp/' + file_name, function(err, data) {
+            fs.readFile('/tmp/' + file, function (err, data) {
                 if (err) {
-                    console.log("Error reading file " + file_name);
+                    console.log("Error reading file " + file);
                     console.log(err);
                     callback(err);
                     return;
@@ -117,20 +143,20 @@ module.exports.executor = function (event, context, mainCallback) {
 
                 var params = {
                     Bucket: bucket_name,
-                    Key: prefix + "/" + file_name,
+                    Key: prefix + "/" + file,
                     Body: data
                 };
 
 
-                s3.putObject(params, function(err, data) {
-                   if (err){
-                       console.log("Error uploading file " + file_name);
-                       console.log(err);
-                       callback(err);
-                       return;
-                   }
-                   console.log("Uploaded file " + file_name);
-                   callback();
+                s3.putObject(params, function (err) {
+                    if (err) {
+                        console.log("Error uploading file " + file);
+                        console.log(err);
+                        callback(err);
+                        return;
+                    }
+                    console.log("Uploaded file " + file);
+                    callback();
                 });
             });
 
@@ -145,12 +171,11 @@ module.exports.executor = function (event, context, mainCallback) {
         });
     }
 
-
     async.waterfall([
         download,
         execute,
         upload
-    ], function (err, result) {
+    ], function (err) {
         if (err) {
             console.error('Error: ' + err);
             const response = {
@@ -168,9 +193,7 @@ module.exports.executor = function (event, context, mainCallback) {
 
             const response = {
                 statusCode: 200,
-                body: JSON.stringify({
-                    message: 'AWS Lambda exit: start ' + t_start + ' end ' + t_end + ' duration ' + duration + ' ms, executable: ' + executable + ' args: ' + args
-                })
+                body: 'AWS Lambda exit: duration ' + duration + ' ms, executable: ' + executable + ' args: ' + args
             };
 
             mainCallback(null, response);

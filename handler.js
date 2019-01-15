@@ -1,59 +1,61 @@
-'use strict';
+"use strict";
 
-var childProcess = require('child_process');
-var fs = require('fs');
-var async = require('async');
-var aws = require('aws-sdk');
-const path = require('path');
-var s3 = new aws.S3();
+const childProcess = require("child_process");
+const fs = require("fs");
+const async = require("async");
+const aws = require("aws-sdk");
+const path = require("path");
+const s3 = new aws.S3();
+const directory = "/tmp";
 
 module.exports.executor = function (event, context, mainCallback) {
 
-    var body = JSON.parse(event.body);
+    const body = JSON.parse(event.body);
 
-    var executable = body.executable;
-    var args = body.args;
-    var bucket_name = body.options.bucket;
-    var prefix = body.options.prefix;
-    var inputs = [];
+    const executable = body.executable;
+    const args = body.args;
+    const bucket_name = body.options.bucket;
+    const prefix = body.options.prefix;
+    const inputs = [];
     for (let index = 0; index < body.inputs.length; ++index) {
         inputs.push(body.inputs[index].name);
     }
-    var outputs = [];
+    const outputs = [];
     for (let index = 0; index < body.outputs.length; ++index) {
         outputs.push(body.outputs[index].name);
     }
-    var files = inputs.slice();
-    if (!fs.existsSync(__dirname + '/' + executable)) {
+    const files = inputs.slice();
+    if (!fs.existsSync(__dirname + "/" + executable)) {
         files.push(executable);
     }
 
-    var t_start = Date.now();
-    var t_end;
+    const t_start = Date.now();
 
-    console.log('executable: ' + executable);
-    console.log('arguments:  ' + args);
-    console.log('inputs:      ' + inputs);
-    console.log('outputs:    ' + outputs);
-    console.log('bucket:     ' + bucket_name);
-    console.log('prefix:     ' + prefix);
+    console.log("Executable: " + executable);
+    console.log("Arguments:  " + args);
+    console.log("Inputs:      " + inputs);
+    console.log("Outputs:    " + outputs);
+    console.log("Bucket:     " + bucket_name);
+    console.log("Prefix:     " + prefix);
 
-    const directory = '/tmp';
-    fs.readdir(directory, (err, files) => {
-        if (err) throw err;
-        for (const file of files) {
-            fs.unlink(path.join(directory, file), err => {
-                if (err) throw err;
-            });
-        }
-    });
+    function clearTmpDir(callback) {
+        fs.readdir(directory, (err, files) => {
+            if (err) throw err;
+            for (const file of files) {
+                fs.unlink(path.join(directory, file), err => {
+                    if (err) throw err;
+                });
+            }
+        });
+        callback();
+    }
 
     function download(callback) {
         async.each(files, function (file, callback) {
 
-            console.log('Downloading ' + bucket_name + "/" + prefix + "/" + file);
+            console.log("Downloading " + bucket_name + "/" + prefix + "/" + file);
 
-            var params = {
+            const params = {
                 Bucket: bucket_name,
                 Key: prefix + "/" + file
             };
@@ -63,7 +65,7 @@ module.exports.executor = function (event, context, mainCallback) {
                     console.log(err);
                     callback(err);
                 } else {
-                    fs.writeFile('/tmp/' + file, data.Body, function (err) {
+                    fs.writeFile("/tmp/" + file, data.Body, function (err) {
                         if (err) {
                             console.log("Unable to save file " + file);
                             callback(err);
@@ -80,60 +82,68 @@ module.exports.executor = function (event, context, mainCallback) {
             });
         }, function (err) {
             if (err) {
-                console.error('A file failed to process');
-                callback('Error downloading')
+                console.error("Failed to download file " + file);
+                // 500 status code will force the Hyperflow to retry request in case of race condition on S3
+                const response = {
+                    statusCode: 500,
+                    body: JSON.stringify({
+                        message: "S3 download error"
+                    })
+                };
+                mainCallback(null, response);
             } else {
-                console.log('All files have been downloaded successfully');
+                console.log("All files have been downloaded successfully");
                 callback()
             }
         });
     }
 
     function execute(callback) {
-        var proc_name = __dirname + '/' + executable;
+        let proc_name = __dirname + "/" + executable;
 
 
         if (fs.existsSync(/tmp/ + executable)) {
             proc_name = /tmp/ + executable;
             console.log("Running executable from S3");
-            fs.chmodSync(proc_name, '777');
+            fs.chmodSync(proc_name, "777");
         }
-        var proc;
-        console.log('Running ' + proc_name);
+        let proc;
+        console.log("Running " + proc_name);
 
         if (proc_name.endsWith(".js")) {
-            proc = childProcess.fork(proc_name, args, {cwd: '/tmp'});
+            proc = childProcess.fork(proc_name, args, {cwd: "/tmp"});
         } else {
-            process.env.PATH = '.:' + __dirname;
-            proc = childProcess.spawn(proc_name, args, {cwd: '/tmp'});
+            process.env.PATH = ".:" + __dirname;
+            proc = childProcess.spawn(proc_name, args, {cwd: "/tmp"});
 
-            proc.stdout.on('data', function (exedata) {
-                console.log('Stdout: ' + executable + exedata);
+            proc.stdout.on("data", function (exedata) {
+                console.log("Stdout: " + executable + exedata);
             });
 
-            proc.stderr.on('data', function (exedata) {
-                console.log('Stderr: ' + executable + exedata);
+            proc.stderr.on("data", function (exedata) {
+                console.log("Stderr: " + executable + exedata);
             });
         }
 
-        proc.on('error', function (code) {
-            console.error('error!!' + executable + JSON.stringify(code));
+        proc.on("error", function (code) {
+            console.error("Error!!" + executable + JSON.stringify(code));
         });
-        proc.on('close', function () {
-            console.log('My exe close ' + executable);
+        proc.on("exit", function () {
+            console.log("My exe exit " + executable);
+        });
+
+        proc.on("close", function () {
+            console.log("My exe close " + executable);
             callback()
-        });
-        proc.on('exit', function () {
-            console.log('My exe exit ' + executable);
         });
     }
 
     function upload(callback) {
         async.each(outputs, function (file, callback) {
 
-            console.log('uploading ' + bucket_name + "/" + prefix + "/" + file);
+            console.log("Uploading " + bucket_name + "/" + prefix + "/" + file);
 
-            fs.readFile('/tmp/' + file, function (err, data) {
+            fs.readFile("/tmp/" + file, function (err, data) {
                 if (err) {
                     console.log("Error reading file " + file);
                     console.log(err);
@@ -141,12 +151,11 @@ module.exports.executor = function (event, context, mainCallback) {
                     return;
                 }
 
-                var params = {
+                const params = {
                     Bucket: bucket_name,
                     Key: prefix + "/" + file,
                     Body: data
                 };
-
 
                 s3.putObject(params, function (err) {
                     if (err) {
@@ -162,40 +171,40 @@ module.exports.executor = function (event, context, mainCallback) {
 
         }, function (err) {
             if (err) {
-                console.error('A file failed to process');
-                callback('Error uploading')
+                console.error("A file failed to process");
+                callback("Error uploading")
             } else {
-                console.log('All files have been uploaded successfully');
+                console.log("All files have been uploaded successfully");
                 callback()
             }
         });
     }
 
     async.waterfall([
+        clearTmpDir,
         download,
         execute,
         upload
     ], function (err) {
         if (err) {
-            console.error('Error: ' + err);
+            console.error("Error: " + err);
             const response = {
                 statusCode: 400,
                 body: JSON.stringify({
-                    message: 'Bad Request: ' + JSON.stringify(err)
+                    message: "Bad Request: " + JSON.stringify(err)
                 })
             };
 
             mainCallback(null, response);
         } else {
-            console.log('Success');
-            t_end = Date.now();
-            var duration = t_end - t_start;
+            console.log("Success");
+            const t_end = Date.now();
+            const duration = t_end - t_start;
 
             const response = {
                 statusCode: 200,
-                body: 'AWS Lambda exit: duration ' + duration + ' ms, executable: ' + executable + ' args: ' + args
+                body: "AWS Lambda exit: duration " + duration + " ms, executable: " + executable + " args: " + args
             };
-
             mainCallback(null, response);
         }
     })

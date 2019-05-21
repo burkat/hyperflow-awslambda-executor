@@ -12,11 +12,23 @@ module.exports.executor = function (event, context, mainCallback) {
 
     const body = JSON.parse(event.body);
 
+    const metrics = {
+        "lambdaStart": Date.now(),
+        "lambdaEnd": "",
+        "downloadStart": "",
+        "downloadEnd": "",
+        "executionStart": "",
+        "executionEnd": "",
+        "uploadStart": "",
+        "uploadEnd": "",
+    };
+
     const executable = body.executable;
     const args = body.args;
     const bucket_name = body.options.bucket;
     const prefix = body.options.prefix;
     const inputs = [];
+    const logName = body.logName;
     for (let index = 0; index < body.inputs.length; ++index) {
         inputs.push(body.inputs[index].name);
     }
@@ -29,14 +41,51 @@ module.exports.executor = function (event, context, mainCallback) {
         files.push(executable);
     }
 
-    const t_start = Date.now();
-
     console.log("Executable: " + executable);
     console.log("Arguments:  " + args);
-    console.log("Inputs:      " + inputs);
+    console.log("Inputs:     " + inputs);
     console.log("Outputs:    " + outputs);
     console.log("Bucket:     " + bucket_name);
     console.log("Prefix:     " + prefix);
+
+    async.waterfall([
+        clearTmpDir,
+        download,
+        execute,
+        upload
+    ], async function (err) {
+        if (err) {
+            console.error("Error: " + err);
+            const response = {
+                statusCode: 400,
+                body: JSON.stringify({
+                    message: "Bad Request: " + JSON.stringify(err)
+                })
+            };
+
+            mainCallback(null, response);
+        } else {
+            console.log("Success");
+            metrics.lambdaEnd = Date.now();
+            const metricsString = "fargate start: " + metrics.lambdaStart + " fargate end: " + metrics.lambdaEnd +
+                " download start: " + metrics.downloadStart + " download end: " + metrics.downloadEnd +
+                " execution start: " + metrics.executionStart + " execution end: " + metrics.executionEnd +
+                " upload start: " + metrics.uploadStart + " upload end: " + metrics.uploadEnd;
+            if (logName !== undefined) {
+                await s3.putObject({
+                    Bucket: bucket_name,
+                    Key: "logs/" + logName,
+                    ContentType: 'text/plain',
+                    Body: metricsString
+                }).promise();
+            }
+            const response = {
+                statusCode: 200,
+                body: metricsString
+            };
+            mainCallback(null, response);
+        }
+    });
 
     function clearTmpDir(callback) {
         fs.readdir(directory, (err, files) => {
@@ -51,6 +100,7 @@ module.exports.executor = function (event, context, mainCallback) {
     }
 
     function download(callback) {
+        metrics.downloadStart = Date.now();
         async.each(files, function (file, callback) {
 
             console.log("Downloading " + bucket_name + "/" + prefix + "/" + file);
@@ -81,6 +131,7 @@ module.exports.executor = function (event, context, mainCallback) {
                 }
             });
         }, function (err) {
+            metrics.downloadEnd = Date.now();
             if (err) {
                 console.error("Failed to download file " + file);
                 // 500 status code will force the Hyperflow to retry request in case of race condition on S3
@@ -99,6 +150,7 @@ module.exports.executor = function (event, context, mainCallback) {
     }
 
     function execute(callback) {
+        metrics.executionStart = Date.now();
         let proc_name = __dirname + "/" + executable;
 
 
@@ -134,11 +186,13 @@ module.exports.executor = function (event, context, mainCallback) {
 
         proc.on("close", function () {
             console.log("My exe close " + executable);
-            callback()
+            callback();
+            metrics.executionEnd = Date.now();
         });
     }
 
     function upload(callback) {
+        metrics.uploadStart = Date.now();
         async.each(outputs, function (file, callback) {
 
             console.log("Uploading " + bucket_name + "/" + prefix + "/" + file);
@@ -170,6 +224,7 @@ module.exports.executor = function (event, context, mainCallback) {
             });
 
         }, function (err) {
+            metrics.uploadEnd = Date.now();
             if (err) {
                 console.error("A file failed to process");
                 callback("Error uploading")
@@ -179,34 +234,5 @@ module.exports.executor = function (event, context, mainCallback) {
             }
         });
     }
-
-    async.waterfall([
-        clearTmpDir,
-        download,
-        execute,
-        upload
-    ], function (err) {
-        if (err) {
-            console.error("Error: " + err);
-            const response = {
-                statusCode: 400,
-                body: JSON.stringify({
-                    message: "Bad Request: " + JSON.stringify(err)
-                })
-            };
-
-            mainCallback(null, response);
-        } else {
-            console.log("Success");
-            const t_end = Date.now();
-            const duration = t_end - t_start;
-
-            const response = {
-                statusCode: 200,
-                body: "AWS Lambda exit: duration " + duration + " ms, executable: " + executable + " args: " + args
-            };
-            mainCallback(null, response);
-        }
-    })
 
 };

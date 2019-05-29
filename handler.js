@@ -67,7 +67,7 @@ module.exports.executor = function (event, context, mainCallback) {
         } else {
             console.log("Success");
             metrics.lambdaEnd = Date.now();
-            const metricsString = "fargate start: " + metrics.lambdaStart + " fargate end: " + metrics.lambdaEnd +
+            const metricsString = "lambda start: " + metrics.lambdaStart + " lambda end: " + metrics.lambdaEnd +
                 " download start: " + metrics.downloadStart + " download end: " + metrics.downloadEnd +
                 " execution start: " + metrics.executionStart + " execution end: " + metrics.executionEnd +
                 " upload start: " + metrics.uploadStart + " upload end: " + metrics.uploadEnd;
